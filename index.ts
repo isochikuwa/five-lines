@@ -32,7 +32,6 @@ class Air implements Tile {
   draw(_g: CanvasRenderingContext2D, _x: number, _y: number) {}
 
   moveHorizontal(player: Player, dx: number) {
-    // player.moveHorizontal(dx);
     player.move(dx, 0);
   }
 
@@ -108,8 +107,7 @@ class Falling implements FallingState {
   isFalling(): boolean { return true; }
   moveHorizontal(_player: Player, _dx: number) {}
   drop(tile: Tile, x: number, y: number) {
-    map[y + 1][x] = tile;
-    map[y][x] = new Air();
+    map.drop(tile, x, y);
   }
 }
 
@@ -127,7 +125,7 @@ class FallStrategy {
   constructor(private falling: FallingState) {}
 
   update(tile: Tile, x: number, y:number) {
-    this.falling = map[y + 1][x].getBlockOnTopState();
+    this.falling = map.getBlockOnTopState(x, y + 1);
     this.falling.drop(tile, x, y);
   }
 
@@ -193,7 +191,11 @@ class Box implements Tile {
 }
 
 class KeyConfiguration {
-  constructor(private color: string, private _1: boolean, private removeStrategy: RemoveStrategy) {}
+  constructor(
+    private color: string,
+    private _1: boolean,
+    private removeStrategy: RemoveStrategy
+  ) {}
 
   is1() { return this._1; }
 
@@ -202,13 +204,7 @@ class KeyConfiguration {
   }
 
   removeLock() {
-    for (let y = 0; y < map.length; y++) {
-      for (let x = 0; x < map[y].length; x++) {
-        if (this.removeStrategy.check(map[y][x])) {
-          map[y][x] = new Air();
-        }
-      }
-    }
+    map.removeLock(this.removeStrategy);
   }
 }
 
@@ -315,34 +311,91 @@ class Player {
   }
 
   moveHorizontal(dx: number) {
-    map[this.y][this.x + dx].moveHorizontal(this, dx);
+    map.moveHorizontal(this, this.x, this.y, dx);
   }
 
   moveVertical(dy: number) {
-    map[this.y + dy][this.x].moveVertical(this, dy);
+    map.moveVertical(this, this.x, this.y, dy);
   }
 
-  private moveToTile(newx: number, newy: number) {
-    map[this.y][this.x] = new Air();
-    map[newy][newx] = new PlayerTile();
+  moveToTile(newx: number, newy: number) {
+    map.movePlayer(this.x, this.y, newx, newy);
     this.x = newx;
     this.y = newy;
   }
 
   pushHorizontal(dx: number) {
-    if (map[this.y][this.x + dx + dx].isAir()
-      && !map[this.y + 1][this.x + dx].isAir()) {
-      map[this.y][this.x + dx + dx] = map[this.y][this.x + dx];
-      this.moveToTile(this.x + dx, this.y);
-    }
+    map.pushHorizontal(this, this.x, this.y, dx);
   }
 }
 
 class Map {
   private map: Tile[][];
 
-  getMap() { return this.map; }
-  setMap(map: Tile[][]) { this.map = map; }
+  constructor() {
+    this.map = new Array(rawMap.length);
+    for (let y = 0; y < rawMap.length; y++) {
+      this.map[y] = new Array(rawMap[y].length);
+      for (let x = 0; x < rawMap[y].length; x++) {
+        this.map[y][x] = transformTile(rawMap[y][x]);
+      }
+    }
+  }
+
+  drop(tile: Tile, x: number, y: number) {
+    this.map[y + 1][x] = tile;
+    this.map[y][x] = new Air();
+  }
+
+  getBlockOnTopState(x: number, y: number): FallingState {
+    return this.map[y][x].getBlockOnTopState();
+  }
+
+  removeLock(removeStrategy: RemoveStrategy) {
+    for (let y = 0; y < this.map.length; y++) {
+      for (let x = 0; x < this.map[y].length; x++) {
+        if (removeStrategy.check(this.map[y][x])) {
+          this.map[y][x] = new Air();
+        }
+      }
+    }
+  }
+
+  moveHorizontal(player: Player, x: number, y: number, dx: number) {
+    this.map[y][x + dx].moveHorizontal(player, dx);
+  }
+
+  moveVertical(player: Player, x: number, y: number, dy: number) {
+    this.map[y + dy][x].moveVertical(player, dy);
+  }
+
+  movePlayer(x: number, y: number, newx: number, newy: number) {
+    this.map[y][x] = new Air();
+    this.map[newy][newx] = new PlayerTile();
+  }
+
+  pushHorizontal(player: Player, x: number, y: number, dx: number) {
+    if (this.map[y][x + dx + dx].isAir() && !this.map[y + 1][x + dx].isAir()) {
+      this.map[y][x + dx + dx] = this.map[y][x + dx];
+      player.moveToTile(x + dx, y);
+    }
+  }
+
+  update() {
+    for (let y = this.map.length - 1; y >= 0; y--) {
+      for (let x = 0; x < this.map[y].length; x++) {
+        this.map[y][x].update(x, y);
+      }
+    }
+  }
+
+  draw(g: CanvasRenderingContext2D) {
+    for (let y = 0; y < this.map.length; y++) {
+      for (let x = 0; x < this.map[y].length; x++) {
+        this.map[y][x].draw(g, x, y);
+      }
+    }
+  }
 }
 
 let player = new Player();
@@ -355,14 +408,15 @@ let rawMap: RawTile[][] = [
   [2, 4, 1, 1, 1, 9, 0, 2],
   [2, 2, 2, 2, 2, 2, 2, 2],
 ];
+const YELLOW_KEY = new KeyConfiguration("#ffcc00", true, new RemoveLock1());
+const CYAN_KEY = new KeyConfiguration("#00ccff", false, new RemoveLock2());
+
 // let map: Tile[][];
-let map: Map;
+let map = new Map();
 function assertExhausted(x: never): never {
   throw new Error("Unexpected object: " + x);
 }
 
-const YELLOW_KEY = new KeyConfiguration("#ffcc00", true, new RemoveLock1());
-const CYAN_KEY = new KeyConfiguration("#00ccff", false, new RemoveLock2());
 function transformTile(tile: RawTile) {
   switch (tile) {
     case RawTile.AIR: return new Air();
@@ -381,21 +435,11 @@ function transformTile(tile: RawTile) {
   }
 }
 
-function transformMap() {
-  map.setMap(new Array(rawMap.length));
-  for (let y = 0; y < rawMap.length; y++) {
-    map.getMap()[y] = new Array(rawMap[y].length);
-    for (let x = 0; x < rawMap[y].length; x++) {
-      map.getMap()[y][x] = transformTile(rawMap[y][x]);
-    }
-  }
-}
-
 let inputs: Input[] = [];
 
 function update() {
   handleInputs();
-  updateMap();
+  map.update();
 }
 
 function handleInputs() {
@@ -405,17 +449,9 @@ function handleInputs() {
   }
 }
 
-function updateMap() {
-  for (let y = map.length - 1; y >= 0; y--) {
-    for (let x = 0; x < map[y].length; x++) {
-      map[y][x].update(x, y);
-    }
-  }
-}
-
 function draw() {
   let g = createGraphics();
-  drawMap(g);
+  map.draw(g);
   player.draw(g);
 }
 
@@ -426,14 +462,6 @@ function createGraphics() {
   g.clearRect(0, 0, canvas.width, canvas.height);
 
   return g;
-}
-
-function drawMap(g: CanvasRenderingContext2D) {
-  for (let y = 0; y < map.length; y++) {
-    for (let x = 0; x < map[y].length; x++) {
-      map[y][x].draw(g, x, y);
-    }
-  }
 }
 
 function gameLoop() {
@@ -447,7 +475,6 @@ function gameLoop() {
 }
 
 window.onload = () => {
-  transformMap();
   gameLoop();
 }
 
